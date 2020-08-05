@@ -1,2 +1,3 @@
 # iot-device-simulator
-GCP IoT Device Emulator
+
+GCP IoT Device Simulator
