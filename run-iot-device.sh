@@ -62,5 +62,5 @@ else
      --private_key_file='/home/user/.ssh/rsa_private.pem' \
      --algorithm=RS256 \
      --ca_certs='/home/user/.ssh/roots.pem' \
-     --num_messages 1"
+     --num_messages 10"
 fi
