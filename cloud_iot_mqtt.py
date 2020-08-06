@@ -114,8 +114,7 @@ class Device:
             print("No payload provided.")
             return
 
-        # The config is passed in the payload of the message. In this example,
-        # the server sends a serialized JSON string.
+        # The config is passed in the payload of the message.
         data = json.loads(payload)
         print(f"Received new config. {data}")
 
