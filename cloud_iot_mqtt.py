@@ -56,32 +56,107 @@ class Device:
     Represents the state of a single device.
     """
 
-    def __init__(self):
-        self.connected_event = threading.Event()
+    def __init__(self, project_id, cloud_region, registry_id, device_id):
+        # params that form client_id
+        self._project_id = project_id
+        self._cloud_region = cloud_region
+        self._registry_id = registry_id
+        self._device_id = device_id
+
+        self._client = mqtt.Client(client_id=self.client_id)
+        self._connected_event = threading.Event()
+
+        self._client.on_connect = self.on_connect
+        self._client.on_publish = self.on_publish
+        self._client.on_disconnect = self.on_disconnect
+        self._client.on_subscribe = self.on_subscribe
+        self._client.on_message = self.on_message
+
+    @property
+    def client_id(self):
+        return (
+            f"projects/{self._project_id}/"
+            f"locations/{self._cloud_region}/"
+            f"registries/{self._registry_id}/"
+            f"devices/{self._device_id}"
+        )
+
+    @property
+    def project_id(self):
+        return self._project_id
+
+    @property
+    def cloud_region(self):
+        return self._cloud_region
+
+    @property
+    def registry_id(self):
+        return self._registry_id
+
+    @property
+    def device_id(self):
+        return self._device_id
+
+    def authenticate(self, token):
+        self._client.username_pw_set(username="unused", password=token)
+
+    def tls_set(self, ca_certs, tls_version, **kwargs):
+        self._client.tls_set(
+            ca_certs=ca_certs,
+            tls_version=tls_version,
+            **kwargs
+        )
+
+    def connect(self, mqtt_bridge_hostname, mqtt_bridge_port):
+        self._client.connect(host=mqtt_bridge_hostname, port=mqtt_bridge_port)
+
+    def disconnect(self):
+        self._client.disconnect()
+
+    def publish(self, topic, payload=None, qos=0, retain=False, properties=None): # noqa
+        self._client.publish(
+            topic,
+            payload=payload,
+            qos=qos,
+            retain=retain,
+            properties=properties
+        )
+
+    def subscribe(self, topic, qos=0, options=None, properties=None):
+        self._client.subscribe(
+            topic,
+            qos=qos,
+            options=options,
+            properties=properties
+        )
+
+    def loop_start(self):
+        self._client.loop_start()
+
+    def loop_stop(self):
+        self._client.loop_stop()
 
     def wait_for_connection(self, timeout):
         """
         Wait for the device to become connected.
         """
-        while not self.connected_event.wait(timeout):
+        print('Device is connecting...')
+        while not self._connected_event.wait(timeout):
             raise RuntimeError("Could not connect to MQTT bridge.")
 
     def on_connect(self, unused_client, unused_userdata, unused_flags, rc):
         """
         Callback for when a device connects.
         """
-        if rc != 0:
-            print("Error connecting:", error_str(rc))
-        else:
-            print("Connected successfully.")
-        self.connected_event.set()
+        print('on_connect', mqtt.connack_string(rc))
+        self._connected_event.set()
 
     def on_disconnect(self, unused_client, unused_userdata, rc):
         """
         Callback for when a device disconnects.
         """
         print("Disconnected:", error_str(rc))
-        self.connected_event.clear()
+        self._connected_event.clear()
 
     def on_publish(self, unused_client, unused_userdata, unused_mid):
         """
@@ -192,51 +267,43 @@ def parse_command_line_args():
 def main():
     args = parse_command_line_args()
 
-    # Create the MQTT client and connect to Cloud IoT.
-    client_id = (f"projects/{args.project_id}/"
-                 f"locations/{args.cloud_region}/"
-                 f"registries/{args.registry_id}/"
-                 f"devices/{args.device_id}")
-    client = mqtt.Client(client_id=client_id)
-    pwd = create_jwt(args.project_id, args.private_key_file, args.algorithm)
-    client.username_pw_set(username="unused", password=pwd)
-    client.tls_set(ca_certs=args.ca_certs, tls_version=ssl.PROTOCOL_TLSv1_2)
+    token = create_jwt(args.project_id, args.private_key_file, args.algorithm)
+    device = Device(
+        args.project_id,
+        args.cloud_region,
+        args.registry_id,
+        args.device_id
+    )
+    device.authenticate(token)
+    device.tls_set(ca_certs=args.ca_certs, tls_version=ssl.PROTOCOL_TLSv1_2)
 
-    device = Device()
+    device.connect(args.mqtt_bridge_hostname, args.mqtt_bridge_port)
 
-    client.on_connect = device.on_connect
-    client.on_publish = device.on_publish
-    client.on_disconnect = device.on_disconnect
-    client.on_subscribe = device.on_subscribe
-    client.on_message = device.on_message
-
-    client.connect(args.mqtt_bridge_hostname, args.mqtt_bridge_port)
-
-    client.loop_start()
+    device.loop_start()
 
     # This is the topic that the device will publish telemetry events
     # (temperature data) to.
-    mqtt_telemetry_topic = f"/devices/{args.device_id}/events"
+    mqtt_telemetry_topic = f"/devices/{device.device_id}/events"
 
     # This is the topic that the device will receive configuration updates on.
-    mqtt_config_topic = f"/devices/{args.device_id}/config"
+    mqtt_config_topic = f"/devices/{device.device_id}/config"
 
     # Wait up to 5 seconds for the device to connect.
     device.wait_for_connection(5)
 
     # Subscribe to the config topic.
-    client.subscribe(mqtt_config_topic, qos=1)
+    device.subscribe(mqtt_config_topic, qos=1)
 
     # Update and publish telemetry readings at a rate of one per second.
     for i in range(1, args.num_messages + 1):
-        payload = f"{args.registry_id}/{args.device_id}-payload-{i}"
+        payload = f"{device.registry_id}/{device.device_id}-payload-{i}"
         print(f"Publishing message '{i}' '{args.num_messages}': '{payload}'")
-        client.publish(mqtt_telemetry_topic, payload, qos=1)
+        device.publish(mqtt_telemetry_topic, payload, qos=1)
         # Send events every second.
         time.sleep(1)
 
-    client.disconnect()
-    client.loop_stop()
+    device.disconnect()
+    device.loop_stop()
     print("Finished loop successfully. Goodbye!")
 
 
