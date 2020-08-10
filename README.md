@@ -29,21 +29,20 @@ Open a terminal at the project root:
 
 -   Run `./run-iot-device.sh` with optional device ID argument, e.g.:
 
-        $ ./run-iot-device.sh my-device
+        $ ./run-iot-device.sh -d my-device
 
     by default `GCP_DEVICE_ID` value from `.env` file is used.
 
     To be able to run device simulator in a background mode an extra 
     optional argument `-b` can be added:
 
-        $ ./run-iot-device.sh my-device -b
+        $ ./run-iot-device.sh -d my-device -b
  
     You can run multiple instances of the device with different device ids.
 
-        $ ./run-iot-device.sh my-device-1 -b
-        $ ./run-iot-device.sh my-device-2 -b
- 
- 
+        $ ./run-iot-device.sh -d my-device-1 -b
+        $ ./run-iot-device.sh -d my-device-2 -b
+
  ## TODO
  
 - [x] Add ability to run fake iot device in a background
