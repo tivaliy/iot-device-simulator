@@ -18,6 +18,7 @@ devices and running them all at the same time.
 import argparse
 import datetime
 import json
+import logging
 import os
 import ssl
 import threading
@@ -27,6 +28,14 @@ from random import randint
 
 import jwt
 import paho.mqtt.client as mqtt
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(module)s - %(message)s",
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+
+logger = logging.getLogger(__name__)
 
 
 def create_jwt(project_id, private_key_file, algorithm):
@@ -41,8 +50,8 @@ def create_jwt(project_id, private_key_file, algorithm):
     }
     with open(private_key_file, "r") as f:
         private_key = f.read()
-    print(f"Creating JWT using '{algorithm}' "
-          f"from private key file '{private_key_file}'")
+    logger.debug(f"Creating JWT using '{algorithm}' "
+                 f"from private key file '{private_key_file}'")
     return jwt.encode(token, private_key, algorithm=algorithm)
 
 
@@ -142,7 +151,7 @@ class Device:
         """
         Wait for the device to become connected.
         """
-        print('Device is connecting...')
+        logger.info('Device is connecting...')
         while not self._connected_event.wait(timeout):
             raise RuntimeError("Could not connect to MQTT bridge.")
 
@@ -150,36 +159,36 @@ class Device:
         """
         Callback for when a device connects.
         """
-        print('on_connect', mqtt.connack_string(rc))
+        logger.info(f"on_connect {mqtt.connack_string(rc)}")
         self._connected_event.set()
 
     def on_disconnect(self, unused_client, unused_userdata, rc):
         """
         Callback for when a device disconnects.
         """
-        print("Disconnected:", error_str(rc))
+        logger.info(f"Disconnected: {error_str(rc)}")
         self._connected_event.clear()
 
     def on_publish(self, unused_client, unused_userdata, unused_mid):
         """
         Callback when the device receives a PUBACK from the MQTT bridge.
         """
-        print('Published message acked.')
+        logger.info('Published message acked.')
 
     def on_subscribe(self, unused_client, unused_userdata, unused_mid, granted_qos):  # noqa
         """
         Callback when the device receives a SUBACK from the MQTT bridge.
         """
-        print("Subscribed: ", granted_qos)
+        logger.info(f"Subscribed: {granted_qos}")
         if granted_qos[0] == 128:
-            print("Subscription failed.")
+            logger.info("Subscription failed.")
 
     def on_message(self, unused_client, unused_userdata, message):
         """
         Callback when the device receives a message on a subscription.
         """
         payload = message.payload.decode("utf-8")
-        print(
+        logger.info(
             f"Received message '{payload}' on topic '{message.topic}' "
             f"with Qos {str(message.qos)}."
         )
@@ -188,12 +197,12 @@ class Device:
         # config topic. If there is no configuration for the device, the device
         # will receive a config with an empty payload.
         if not payload:
-            print("No payload provided.")
+            logger.info("No payload provided.")
             return
 
         # The config is passed in the payload of the message.
         data = json.loads(payload)
-        print(f"Received new config. {data}")
+        logger.debug(f"Received new config. {data}")
 
 
 def parse_command_line_args():
@@ -262,12 +271,19 @@ def parse_command_line_args():
         help=("Indicates whether the message to be published is a "
               "telemetry event or a device state message.")
     )
-
+    parser.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="increase output verbosity"
+    )
     return parser.parse_args()
 
 
 def main():
     args = parse_command_line_args()
+
+    if args.verbose:
+        logger.setLevel(logging.DEBUG)
 
     token = create_jwt(args.project_id, args.private_key_file, args.algorithm)
     device = Device(
@@ -299,14 +315,16 @@ def main():
     # Update and publish telemetry readings at a rate of one per second.
     for i in range(1, args.num_messages + 1):
         payload = f"{device.registry_id}/{device.device_id}-payload-{i}"
-        print(f"Publishing message '{i}' '{args.num_messages}': '{payload}'")
+        logger.info(
+            f"Publishing message '{i}' '{args.num_messages}': '{payload}'"
+        )
         device.publish(mqtt_telemetry_topic, payload, qos=1)
         # Send events every second.
         time.sleep(randint(1, 4))
 
     device.disconnect()
     device.loop_stop()
-    print("Finished loop successfully. Goodbye!")
+    logger.info("Finished loop successfully. Goodbye!")
 
 
 if __name__ == "__main__":
