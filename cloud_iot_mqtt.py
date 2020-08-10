@@ -202,7 +202,7 @@ class Device:
 
         # The config is passed in the payload of the message.
         data = json.loads(payload)
-        logger.debug(f"Received new config. {data}")
+        logger.info(f"Received new config. {data}")
 
 
 def parse_command_line_args():
@@ -264,12 +264,6 @@ def parse_command_line_args():
         type=int,
         default=8883,
         help="MQTT bridge port."
-    )
-    parser.add_argument(
-        "--message_type", choices=("event", "state"),
-        default="event",
-        help=("Indicates whether the message to be published is a "
-              "telemetry event or a device state message.")
     )
     parser.add_argument(
         "-v", "--verbose",
