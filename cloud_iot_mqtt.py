@@ -306,11 +306,17 @@ def main():
     # This is the topic that the device will receive configuration updates on.
     mqtt_config_topic = f"/devices/{device.device_id}/config"
 
+    # This is the topic that the device will receive commands from IoT Core.
+    mqtt_commands_topic = f"/devices/{device.device_id}/commands/#"
+
     # Wait up to 5 seconds for the device to connect.
     device.wait_for_connection(5)
 
     # Subscribe to the config topic.
     device.subscribe(mqtt_config_topic, qos=1)
+
+    # Subscribe to the commands topic
+    device.subscribe(mqtt_commands_topic, qos=1)
 
     # Update and publish telemetry readings at a rate of one per second.
     for i in range(1, args.num_messages + 1):
