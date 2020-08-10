@@ -23,6 +23,8 @@ import ssl
 import threading
 import time
 
+from random import randint
+
 import jwt
 import paho.mqtt.client as mqtt
 
@@ -282,7 +284,7 @@ def main():
     device.loop_start()
 
     # This is the topic that the device will publish telemetry events
-    # (temperature data) to.
+    # (e.g. temperature data, power consumption etc.) to.
     mqtt_telemetry_topic = f"/devices/{device.device_id}/events"
 
     # This is the topic that the device will receive configuration updates on.
@@ -300,7 +302,7 @@ def main():
         print(f"Publishing message '{i}' '{args.num_messages}': '{payload}'")
         device.publish(mqtt_telemetry_topic, payload, qos=1)
         # Send events every second.
-        time.sleep(1)
+        time.sleep(randint(1, 4))
 
     device.disconnect()
     device.loop_stop()

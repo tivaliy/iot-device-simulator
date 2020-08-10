@@ -34,7 +34,9 @@ gcloud services enable --project "$GCP_PROJECT" \
 
 # Create a PubSub topics
 echo "[*] Creating PubSub topics..."
-gcloud pubsub topics create "$GCP_DEVICE_EVENT_TOPIC"
+gcloud pubsub topics create \
+  "$GCP_DEVICE_EVENT_TOPIC" \
+  "$GCP_DEVICE_STATE_TOPIC"
 
 # Create a Iot Device Registry
 echo "[*] Creating IoT registry..."
@@ -43,6 +45,7 @@ gcloud beta iot registries create "$GCP_IOT_REGISTRY_NAME" \
   --region="$GCP_REGION" \
   --no-enable-http-config \
   --enable-mqtt-config \
+  --state-pubsub-topic="$GCP_DEVICE_STATE_TOPIC"\
   --event-notification-config=topic="$GCP_DEVICE_EVENT_TOPIC"
 
 # Create VM instance that will simulate IoT device behavior
