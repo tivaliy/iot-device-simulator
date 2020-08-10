@@ -24,6 +24,8 @@ import ssl
 import threading
 import time
 
+from dataclasses import dataclass
+from contextlib import contextmanager
 from random import randint
 
 import jwt
@@ -82,6 +84,15 @@ class Device:
         self._client.on_disconnect = self.on_disconnect
         self._client.on_subscribe = self.on_subscribe
         self._client.on_message = self.on_message
+
+    @classmethod
+    def create_from_client_id(cls, client_id):
+        """
+        Creates a Device from client_id string.
+
+        :param client_id: client_id as a string.
+        """
+        return cls(*client_id.split("/")[1::2])
 
     @property
     def client_id(self):
@@ -273,57 +284,86 @@ def parse_command_line_args():
     return parser.parse_args()
 
 
+@dataclass
+class MqttConnectionConfig:
+    ca_certs: str
+    tls_version: int = ssl.PROTOCOL_TLSv1_2
+    mqtt_bridge_hostname: str = "mqtt.googleapis.com"
+    mqtt_bridge_port: int = 8883
+    timeout: int = 5
+
+
+@contextmanager
+def managed_device(
+        client_id: str,
+        conn_cfg: MqttConnectionConfig,
+        token: str = None
+):
+    device = Device.create_from_client_id(client_id)
+    if token:
+        device.authenticate(token)
+    if conn_cfg.ca_certs:
+        device.tls_set(
+            ca_certs=conn_cfg.ca_certs,
+            tls_version=conn_cfg.tls_version
+        )
+    device.connect(
+        conn_cfg.mqtt_bridge_hostname,
+        conn_cfg.mqtt_bridge_port
+    )
+    device.loop_start()
+    device.wait_for_connection(conn_cfg.timeout)
+    yield device
+    device.disconnect()
+    device.loop_stop()
+
+
 def main():
     args = parse_command_line_args()
 
     if args.verbose:
         logger.setLevel(logging.DEBUG)
 
-    token = create_jwt(args.project_id, args.private_key_file, args.algorithm)
-    device = Device(
-        args.project_id,
-        args.cloud_region,
-        args.registry_id,
-        args.device_id
+    client_id = (f"projects/{args.project_id}/"
+                 f"locations/{args.cloud_region}/"
+                 f"registries/{args.registry_id}/"
+                 f"devices/{args.device_id}")
+    conn_cfg = MqttConnectionConfig(
+        ca_certs=args.ca_certs,
+        tls_version=ssl.PROTOCOL_TLSv1_2,
+        mqtt_bridge_hostname=args.mqtt_bridge_hostname,
+        mqtt_bridge_port=args.mqtt_bridge_port,
+        timeout=5
     )
-    device.authenticate(token)
-    device.tls_set(ca_certs=args.ca_certs, tls_version=ssl.PROTOCOL_TLSv1_2)
-
-    device.connect(args.mqtt_bridge_hostname, args.mqtt_bridge_port)
-
-    device.loop_start()
+    token = create_jwt(args.project_id, args.private_key_file, args.algorithm)
 
     # This is the topic that the device will publish telemetry events
     # (e.g. temperature data, power consumption etc.) to.
-    mqtt_telemetry_topic = f"/devices/{device.device_id}/events"
+    mqtt_telemetry_topic = f"/devices/{args.device_id}/events"
 
     # This is the topic that the device will receive configuration updates on.
-    mqtt_config_topic = f"/devices/{device.device_id}/config"
+    mqtt_config_topic = f"/devices/{args.device_id}/config"
 
     # This is the topic that the device will receive commands from IoT Core.
-    mqtt_commands_topic = f"/devices/{device.device_id}/commands/#"
+    mqtt_commands_topic = f"/devices/{args.device_id}/commands/#"
 
-    # Wait up to 5 seconds for the device to connect.
-    device.wait_for_connection(5)
+    with managed_device(client_id, conn_cfg, token) as device:
+        # Subscribe to the config topic.
+        device.subscribe(mqtt_config_topic, qos=1)
 
-    # Subscribe to the config topic.
-    device.subscribe(mqtt_config_topic, qos=1)
+        # Subscribe to the commands topic
+        device.subscribe(mqtt_commands_topic, qos=1)
 
-    # Subscribe to the commands topic
-    device.subscribe(mqtt_commands_topic, qos=1)
+        # Update and publish telemetry readings at a rate of one per second.
+        for i in range(1, args.num_messages + 1):
+            payload = f"{device.registry_id}/{device.device_id}-payload-{i}"
+            logger.info(
+                f"Publishing message '{i}' '{args.num_messages}': '{payload}'"
+            )
+            device.publish(mqtt_telemetry_topic, payload, qos=1)
+            # Send events every second.
+            time.sleep(randint(1, 4))
 
-    # Update and publish telemetry readings at a rate of one per second.
-    for i in range(1, args.num_messages + 1):
-        payload = f"{device.registry_id}/{device.device_id}-payload-{i}"
-        logger.info(
-            f"Publishing message '{i}' '{args.num_messages}': '{payload}'"
-        )
-        device.publish(mqtt_telemetry_topic, payload, qos=1)
-        # Send events every second.
-        time.sleep(randint(1, 4))
-
-    device.disconnect()
-    device.loop_stop()
     logger.info("Finished loop successfully. Goodbye!")
 
 
