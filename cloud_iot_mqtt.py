@@ -20,8 +20,8 @@ import datetime
 import json
 import logging
 import os
+import random
 import ssl
-import threading
 import time
 
 from dataclasses import dataclass
@@ -34,7 +34,7 @@ import paho.mqtt.client as mqtt
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(module)s - %(message)s",
-    datefmt='%Y-%m-%d %H:%M:%S'
+    datefmt="%Y-%m-%d %H:%M:%S"
 )
 
 logger = logging.getLogger(__name__)
@@ -69,6 +69,9 @@ class Device:
     Represents the state of a single device.
     """
 
+    # The maximum backoff time before giving up, in seconds.
+    MAX_BACKOFF_TIME = 32
+
     def __init__(self, project_id, cloud_region, registry_id, device_id):
         # params that form client_id
         self._project_id = project_id
@@ -77,13 +80,16 @@ class Device:
         self._device_id = device_id
 
         self._client = mqtt.Client(client_id=self.client_id)
-        self._connected_event = threading.Event()
 
         self._client.on_connect = self.on_connect
         self._client.on_publish = self.on_publish
         self._client.on_disconnect = self.on_disconnect
         self._client.on_subscribe = self.on_subscribe
         self._client.on_message = self.on_message
+        # Whether to wait with exponential backoff before publishing.
+        self._should_backoff = True
+        # The initial backoff time after a disconnection occurs, in seconds.
+        self._min_backoff_time = 1
 
     @classmethod
     def create_from_client_id(cls, client_id):
@@ -130,7 +136,22 @@ class Device:
         )
 
     def connect(self, mqtt_bridge_hostname, mqtt_bridge_port):
-        self._client.connect(host=mqtt_bridge_hostname, port=mqtt_bridge_port)
+        logger.info(f"Connecting... {mqtt_bridge_hostname}:{mqtt_bridge_port}")
+        if self._should_backoff:
+            # If backoff time is too large, give up.
+            if self._min_backoff_time > self.MAX_BACKOFF_TIME:
+                logger.error(
+                    f"Exceeded maximum backoff time for the device with "
+                    f"ID '{self.device_id}'. Giving up."
+                )
+                return
+            delay = self._min_backoff_time + random.randint(0, 1000) / 1000.0
+            time.sleep(delay)
+            self._min_backoff_time *= 2
+            self._client.connect(
+                host=mqtt_bridge_hostname,
+                port=mqtt_bridge_port
+            )
 
     def disconnect(self):
         self._client.disconnect()
@@ -158,27 +179,25 @@ class Device:
     def loop_stop(self):
         self._client.loop_stop()
 
-    def wait_for_connection(self, timeout):
-        """
-        Wait for the device to become connected.
-        """
-        logger.info('Device is connecting...')
-        while not self._connected_event.wait(timeout):
-            raise RuntimeError("Could not connect to MQTT bridge.")
-
     def on_connect(self, unused_client, unused_userdata, unused_flags, rc):
         """
         Callback for when a device connects.
         """
         logger.info(f"on_connect {mqtt.connack_string(rc)}")
-        self._connected_event.set()
+
+        # After a successful connect, reset backoff time and stop backing off.
+        self._should_backoff = False
+        self._min_backoff_time = 1
 
     def on_disconnect(self, unused_client, unused_userdata, rc):
         """
         Callback for when a device disconnects.
         """
         logger.info(f"Disconnected: {error_str(rc)}")
-        self._connected_event.clear()
+
+        # Since a disconnect occurred, the next loop iteration will wait with
+        # exponential backoff.
+        self._should_backoff = True
 
     def on_publish(self, unused_client, unused_userdata, unused_mid):
         """
@@ -290,7 +309,6 @@ class MqttConnectionConfig:
     tls_version: int = ssl.PROTOCOL_TLSv1_2
     mqtt_bridge_hostname: str = "mqtt.googleapis.com"
     mqtt_bridge_port: int = 8883
-    timeout: int = 5
 
 
 @contextmanager
@@ -312,7 +330,6 @@ def managed_device(
         conn_cfg.mqtt_bridge_port
     )
     device.loop_start()
-    device.wait_for_connection(conn_cfg.timeout)
     yield device
     device.disconnect()
     device.loop_stop()
@@ -332,8 +349,7 @@ def main():
         ca_certs=args.ca_certs,
         tls_version=ssl.PROTOCOL_TLSv1_2,
         mqtt_bridge_hostname=args.mqtt_bridge_hostname,
-        mqtt_bridge_port=args.mqtt_bridge_port,
-        timeout=5
+        mqtt_bridge_port=args.mqtt_bridge_port
     )
     token = create_jwt(args.project_id, args.private_key_file, args.algorithm)
 
