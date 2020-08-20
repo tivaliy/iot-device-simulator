@@ -232,7 +232,7 @@ class Device:
 
         # The config is passed in the payload of the message.
         data = json.loads(payload)
-        logger.info(f"Received new config. {data}")
+        logger.info(f"Received new config: {data}")
 
 
 def parse_command_line_args():
@@ -370,7 +370,7 @@ def main():
         # Subscribe to the commands topic
         device.subscribe(mqtt_commands_topic, qos=1)
 
-        # Update and publish telemetry readings at a rate of one per second.
+        # Update and publish telemetry readings.
         for i in range(1, args.num_messages + 1):
             payload = f"{device.registry_id}/{device.device_id}-payload-{i}"
             logger.info(
@@ -379,6 +379,14 @@ def main():
             device.publish(mqtt_telemetry_topic, payload, qos=1)
             # Send events every second.
             time.sleep(randint(1, 4))
+
+        # This is the topic that the device will send state updates on.
+        mqtt_state_topic = f"/devices/{device.device_id}/state"
+        payload = "Fake state"
+        logger.info(
+            f"Publishing {device.device_id} state: '{payload}'"
+        )
+        device.publish(mqtt_state_topic, payload)
 
     logger.info("Finished loop successfully. Goodbye!")
 
