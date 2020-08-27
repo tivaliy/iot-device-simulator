@@ -232,7 +232,7 @@ class Device:
 
         # The config is passed in the payload of the message.
         data = json.loads(payload)
-        logger.info(f"Received new config: {data}")
+        logger.info(f"Received payload: {data}")
 
 
 def parse_command_line_args():
@@ -384,7 +384,7 @@ def main():
         mqtt_state_topic = f"/devices/{device.device_id}/state"
         payload = "Fake state"
         logger.info(
-            f"Publishing {device.device_id} state: '{payload}'"
+            f"Publishing {device.device_id} STATE: '{payload}'"
         )
         device.publish(mqtt_state_topic, payload)
 
